@@ -1312,7 +1312,6 @@ class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pyl
         assert new_outline == get_course_outline(self.course_key)
 
 
-
 class ContentErrorTestCase(CacheIsolationTestCase):
     """Test error collection and reporting."""
 
