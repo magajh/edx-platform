@@ -1315,7 +1315,6 @@ class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pyl
         replace_course_outline(new_outline)
         assert new_outline == get_course_outline(self.course_key)
 
-
     def _add_course_mode(
         self,
         course_key,
@@ -1377,7 +1376,7 @@ class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pyl
             entrance_exam_id=None,
             course_visibility=CourseVisibility.PRIVATE,
         )
-    
+
         replace_course_outline(new_outline)
 
         self._add_course_mode(self.course_key)
@@ -1390,13 +1389,13 @@ class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pyl
 
         # Get details
         staff_details, student_details, beta_tester_details = self.get_details(check_date)
-        
 
         assert len(staff_details.outline.accessible_sequences) == 1
         assert len(beta_tester_details.outline.accessible_sequences) == 0
+        assert len(student_details.outline.accessible_sequences) == 1
+
         master_student_details = get_user_course_outline_details(self.course_key, self.master_student, check_date)
         assert len(master_student_details.outline.accessible_sequences) == 0
-        assert len(student_details.outline.accessible_sequences) == 1
 
 
 class ContentErrorTestCase(CacheIsolationTestCase):
