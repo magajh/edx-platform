@@ -46,7 +46,7 @@ from .processors.schedule import ScheduleOutlineProcessor
 from .processors.special_exams import SpecialExamsOutlineProcessor
 from .processors.visibility import VisibilityOutlineProcessor
 from .processors.enrollment import EnrollmentOutlineProcessor
-from .processors.enrollment_track_partitions import EnrollmentTrackPartitionGroupsOutlineProcessor
+from .processors.enrollment_track_partition_groups import EnrollmentTrackPartitionGroupsOutlineProcessor
 
 User = get_user_model()
 log = logging.getLogger(__name__)
