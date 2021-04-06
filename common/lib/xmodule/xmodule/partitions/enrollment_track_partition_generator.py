@@ -33,7 +33,6 @@ def create_enrollment_track_partition_with_course_id(course_id):
         log.warning("No 'enrollment_track' scheme registered, EnrollmentTrackUserPartition will not be created.")
         return None
 
-
     partition = enrollment_track_scheme.create_user_partition(
         id=ENROLLMENT_TRACK_PARTITION_ID,
         name=_("Enrollment Track Groups"),

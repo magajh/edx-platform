@@ -33,7 +33,7 @@ class EnrollmentTrackPartitionGroupsOutlineProcessor(OutlineProcessor):
 
     def load_data(self):
         user_partition = create_enrollment_track_partition_with_course_id(self.course_key)
-        self.user_groups = get_user_partition_groups(self.course_key, [user_partition], self.user)
+        self.enrollment_track_groups = get_user_partition_groups(self.course_key, [user_partition], self.user)
 
     def _should_block_be_removed(self, block):
         """
@@ -44,7 +44,7 @@ class EnrollmentTrackPartitionGroupsOutlineProcessor(OutlineProcessor):
         if not groups:
             return False
 
-        for user_group in self.user_groups:
+        for user_group in self.enrollment_track_groups.values():
             # If the user's partition group, say Masters,
             # does not belong to the partition of the block, say [verified],
             # the block should be removed
