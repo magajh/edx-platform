@@ -1,5 +1,5 @@
 """ Password reset logic and views . """
-
+import json
 import logging
 
 from django import forms
@@ -595,9 +595,15 @@ def password_change_request_handler(request):
         POST /account/password
 
     """
+    import pdb
+    pdb.set_trace()
+    body = json.loads(request.body)
     user = request.user
-    # Prefer logged-in user's email
-    email = user.email if user.is_authenticated else request.POST.get('email')
+    if body.get('from_support_tools'):
+        email = body.get('email')
+    else:
+        # Prefer logged-in user's email
+        email = user.email if user.is_authenticated else request.POST.get('email')
     AUDIT_LOG.info("Password reset initiated for email %s.", email)
 
     if getattr(request, 'limited', False):
@@ -610,7 +616,8 @@ def password_change_request_handler(request):
     if email:
         try:
             request_password_change(email, request.is_secure())
-            user = user if user.is_authenticated else _get_user_from_email(email=email)
+            user = user if not body.get('from_support_tools') and user.is_authenticated \
+                else _get_user_from_email(email=email)
             destroy_oauth_tokens(user)
         except errors.UserNotFound:
             AUDIT_LOG.info("Invalid password reset attempt")
