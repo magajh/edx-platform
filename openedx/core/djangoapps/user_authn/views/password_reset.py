@@ -595,8 +595,6 @@ def password_change_request_handler(request):
         POST /account/password
 
     """
-    import pdb
-    pdb.set_trace()
     body = json.loads(request.body)
     user = request.user
     if body.get('from_support_tools'):
