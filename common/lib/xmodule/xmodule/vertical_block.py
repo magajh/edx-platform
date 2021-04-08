@@ -89,12 +89,7 @@ class VerticalBlock(SequenceFields, XModuleFields, StudioEditableBlock, XmlParse
 
             # Check access for randomized library question
             if isinstance(child, LibraryContentBlock):
-                library_questions = child.get_children()
-
-                for ques in library_questions:
-                    if ques.has_access_error:
-                        child_has_access_error = True
-                        break
+                child_has_access_error = child.has_gated_content
 
             if context.get('hide_access_error_blocks') and child_has_access_error:
                 continue
