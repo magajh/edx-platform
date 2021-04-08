@@ -6,10 +6,12 @@ from datetime import datetime, timezone, timedelta
 from unittest import TestCase
 from unittest.mock import patch
 
+import ddt
 import pytest
 import attr
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser, User  # lint-amnesty, pylint: disable=imported-auth-user
+from django.db.models import signals
 from edx_proctoring.exceptions import ProctoredExamNotFoundException
 from edx_when.api import set_dates_for_course
 from mock import patch
@@ -20,6 +22,7 @@ from lms.djangoapps.courseware.tests.factories import BetaTesterFactory
 from openedx.core.djangolib.testing.utils import CacheIsolationTestCase
 from openedx.features.course_experience import COURSE_ENABLE_UNENROLLED_ACCESS_FLAG
 from common.djangoapps.course_modes.models import CourseMode
+from common.djangoapps.course_modes.signals import update_masters_access_course
 from common.djangoapps.student.auth import user_has_role
 from common.djangoapps.student.roles import CourseBetaTesterRole
 
@@ -1281,39 +1284,17 @@ class SequentialVisibilityTestCase(CacheIsolationTestCase):
                         'Sequences should be accessible to enrolled, staff users for a public_outline course'
 
 
+@ddt.ddt
 class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pylint: disable=missing-class-docstring
     """Tests for user partitions that affect outlines (e.g. Enrollment Track)"""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.master_student = User.objects.create_user(
-            'master_student', email='masterstudent@example.com', is_staff=False
+        cls.visibility = VisibilityData(
+            hide_from_toc=False,
+            visible_to_staff_only=False
         )
-
-    def test_roundtrip(self):
-        new_outline = CourseOutlineData(
-            course_key=self.course_key,
-            title="User Partition Test Course",
-            published_at=datetime(2021, 3, 26, tzinfo=timezone.utc),
-            published_version="8ebece4b69dd593d82fe2021",
-            sections=[
-                CourseSectionData(
-                    usage_key=self.course_key.make_usage_key('chapter', '0'),
-                    title="Section 0",
-                    user_partition_groups={
-                        50: frozenset([1, 2]),
-                    }
-                )
-            ],
-            self_paced=False,
-            days_early_for_beta=None,
-            entrance_exam_id=None,
-            course_visibility=CourseVisibility.PRIVATE,
-        )
-
-        replace_course_outline(new_outline)
-        assert new_outline == get_course_outline(self.course_key)
 
     def _add_course_mode(
         self,
@@ -1329,48 +1310,45 @@ class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pyl
             mode_display_name (str): the display name of the mode to add
             upgrade_deadline_expired (bool): whether the upgrade deadline has passed
         """
-        CourseMode(
-            course_id=course_key,
-            mode_slug=mode_slug,
-            mode_display_name=mode_display_name,
-            min_price=50
-        ).save()
-
-    def test_enrollment_track_partition(self):
-        visibility = VisibilityData(
-            hide_from_toc=False,
-            visible_to_staff_only=False
+        signals.post_save.disconnect(update_masters_access_course, sender=CourseMode)
+        try:
+            CourseMode.objects.create(
+                course_id=course_key,
+                mode_slug=mode_slug,
+                mode_display_name=mode_display_name,
+                min_price=50
+            )
+        finally:
+            signals.post_save.connect(update_masters_access_course, sender=CourseMode)
+    
+    def _create_and_enroll_learner(self, username, mode, is_staff=False):
+        learner = User.objects.create_user(
+            username, email='{}@example.com'.format(username), is_staff=is_staff
         )
+        learner.courseenrollment_set.create(course_id=self.course_key, is_active=True, mode=mode)
+        return learner
+
+    def _setup_course_outline_with_sections(
+        self,
+        course_sections,
+        course_start_date=datetime(2021, 3, 26, tzinfo=timezone.utc)
+    ):
         set_dates_for_course(
             self.course_key,
             [
                 (
                     self.course_key.make_usage_key('course', 'course'),
-                    {'start': datetime(2021, 3, 26, tzinfo=timezone.utc)}
+                    {'start': course_start_date}
                 )
             ]
         )
+
         new_outline = CourseOutlineData(
             course_key=self.course_key,
             title="User Partition Test Course",
-            published_at=datetime(2021, 3, 26, tzinfo=timezone.utc),
+            published_at=course_start_date,
             published_version="8ebece4b69dd593d82fe2021",
-            sections=[
-                CourseSectionData(
-                    usage_key=self.course_key.make_usage_key('chapter', '0'),
-                    title="Section 0",
-                    user_partition_groups={
-                        50: frozenset([2]),
-                    },
-                    sequences=[
-                        CourseLearningSequenceData(
-                            usage_key=self.course_key.make_usage_key('subsection', '0'),
-                            title='Subsection 0',
-                            visibility=visibility
-                        ),
-                    ]
-                )
-            ],
+            sections=course_sections,
             self_paced=False,
             days_early_for_beta=None,
             entrance_exam_id=None,
@@ -1379,23 +1357,95 @@ class UserPartitionGroupTestCase(OutlineProcessorTestCase):  # lint-amnesty, pyl
 
         replace_course_outline(new_outline)
 
-        self._add_course_mode(self.course_key)
+        return new_outline
 
-        # Enroll student in the course
-        self.student.courseenrollment_set.create(course_id=self.course_key, is_active=True, mode="verified")
-        self.master_student.courseenrollment_set.create(course_id=self.course_key, is_active=True, mode="masters")
+    def test_roundtrip(self):
+        new_outline = self._setup_course_outline_with_sections(
+            [
+                CourseSectionData(
+                    usage_key=self.course_key.make_usage_key('chapter', '0'),
+                    title="Section 0",
+                    user_partition_groups={
+                        50: frozenset([1, 2]),
+                    }
+                )
+            ],
+        )
+
+        replace_course_outline(new_outline)
+        assert new_outline == get_course_outline(self.course_key)
+
+    @ddt.data(
+        (set([2]), None, [CourseMode.VERIFIED], {'student1': 'verified', 'student2':'masters'}, {'student1': 1, 'student2': 0}),
+        (set([7]), None, [CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 0, 'student2': 1}),
+        (set([2, 7]), None, [CourseMode.VERIFIED, CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 1, 'student2': 1}),
+        (set([2]), None, [CourseMode.VERIFIED, CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 1, 'student2': 0}),
+        (set([7]), None, [CourseMode.VERIFIED, CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 0, 'student2': 1}),
+        (None, set([2]), [CourseMode.VERIFIED], {'student1': 'verified', 'student2':'masters'}, {'student1': 1, 'student2': 0}),
+        (None, set([7]), [CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 0, 'student2': 1}),
+        (None, set([2, 7]), [CourseMode.VERIFIED, CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 1, 'student2': 1}),
+        (None, set([2]), [CourseMode.VERIFIED, CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 1, 'student2': 0}),
+        (None, set([7]), [CourseMode.VERIFIED, CourseMode.MASTERS], {'student1': 'verified', 'student2':'masters'}, {'student1': 0, 'student2': 1}),
+    )
+    @ddt.unpack
+    def test_enrollment_track_partition_on_section(
+        self,
+        section_visible_groups,
+        sequence_visible_groups,
+        course_modes,
+        learners_with_modes,
+        expected_values_dict
+    ):
+        section_user_partition_groups = None
+        sequence_user_partition_groups = None
+        if section_visible_groups:
+            section_user_partition_groups = {50: frozenset(section_visible_groups)}
+        if sequence_visible_groups:
+            sequence_user_partition_groups = {50: frozenset(sequence_visible_groups)}
+
+        self._setup_course_outline_with_sections(
+            [
+                CourseSectionData(
+                    usage_key=self.course_key.make_usage_key('chapter', '0'),
+                    title="Section 0",
+                    user_partition_groups=section_user_partition_groups,
+                    sequences=[
+                        CourseLearningSequenceData(
+                            usage_key=self.course_key.make_usage_key('subsection', '0'),
+                            title='Subsection 0',
+                            visibility=self.visibility,
+                            user_partition_groups=sequence_user_partition_groups,
+                        ),
+                    ]
+                )
+            ]
+        )
+
+        for course_mode in course_modes:
+            self._add_course_mode(
+                self.course_key,
+                mode_slug=course_mode,
+                mode_display_name=course_mode,
+            )
+
+        # Enroll students in the course
+        learners_to_verify = set()
+        for username, mode in learners_with_modes.items():
+            learners_to_verify.add(
+                self._create_and_enroll_learner(username, mode)
+            )
 
         check_date = datetime(2021, 3, 27, tzinfo=timezone.utc)
 
         # Get details
-        staff_details, student_details, beta_tester_details = self.get_details(check_date)
+        staff_details, _, beta_tester_details = self.get_details(check_date)
 
         assert len(staff_details.outline.accessible_sequences) == 1
         assert len(beta_tester_details.outline.accessible_sequences) == 0
-        assert len(student_details.outline.accessible_sequences) == 1
 
-        master_student_details = get_user_course_outline_details(self.course_key, self.master_student, check_date)
-        assert len(master_student_details.outline.accessible_sequences) == 0
+        for learner_to_verify in learners_to_verify:
+            learner_details = get_user_course_outline_details(self.course_key, learner_to_verify, check_date)
+            assert len(learner_details.outline.accessible_sequences) == expected_values_dict[learner_to_verify.username]
 
 
 class ContentErrorTestCase(CacheIsolationTestCase):
