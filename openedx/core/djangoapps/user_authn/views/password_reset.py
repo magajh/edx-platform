@@ -1,5 +1,4 @@
 """ Password reset logic and views . """
-import json
 import logging
 
 from django import forms
